@@ -5,7 +5,7 @@ from pacman_env import PacmanEnv
 from collections import defaultdict
 import matplotlib.pyplot as plt
 
-env = PacmanEnv(grid_size=7)
+env = PacmanEnv(grid_size=15, fix_walls=True)
 env.seed(0)
 
 def obs_to_state(obs):
@@ -15,8 +15,7 @@ def obs_to_state(obs):
 Q = defaultdict(lambda: np.zeros(env.action_space.n))
 
 # hyperparams
-episodes = 100000
-episodes_shortname = "100k"
+episodes = 500
 alpha = 0.1
 gamma = 0.99
 epsilon = 1.0
@@ -69,6 +68,11 @@ for ep in range(1, episodes + 1):
 # save Q-table
 with open(os.path.join(log_dir, f"q_table_{episodes_shortname}.pkl"), "wb") as f:
     pickle.dump(dict(Q), f)
+# save walls used during training (only meaningful if fix_walls=True)
+walls_path = os.path.join(log_dir, "walls.npy")
+if getattr(env, "_fixed_walls_cache", None) is not None:
+    np.save(walls_path, env._fixed_walls_cache)
+    print("Saved walls to", walls_path)
 
 # save metrics CSV
 csv_path = os.path.join(log_dir, f"metrics_{episodes_shortname}.csv")

@@ -9,7 +9,7 @@ log_dir = f"logs/{episodes_shortname}_episodes"
 with open(os.path.join(log_dir, f"q_table_{episodes_shortname}.pkl"), "rb") as f:
     Q = pickle.load(f)
 
-env = PacmanEnv(grid_size=7)
+env = PacmanEnv(grid_size=15)
 
 # Build initial pellets template (same as reset)
 pellets_template = np.ones((env.grid_size, env.grid_size), dtype=int)
