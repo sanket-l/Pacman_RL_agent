@@ -1,1 +1,2 @@
 venv
+logs/*/q_table*.pkl

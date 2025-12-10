@@ -15,7 +15,7 @@ def obs_to_state(obs):
 Q = defaultdict(lambda: np.zeros(env.action_space.n))
 
 # hyperparams
-episodes = 2000
+episodes = 100000
 alpha = 0.1
 gamma = 0.99
 epsilon = 1.0

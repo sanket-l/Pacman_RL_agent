@@ -15,7 +15,7 @@ class PacmanEnv(gym.Env):
     """
     metadata = {"render_modes": ["rgb_array"], "render_fps": 4}
 
-    def __init__(self, grid_size=7):
+    def __init__(self, grid_size=10):
         super().__init__()
         self.grid_size = grid_size
         self.action_space = spaces.Discrete(4)
