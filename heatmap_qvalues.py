@@ -1,11 +1,12 @@
 # heatmap_qvalues.py
-import pickle, os
+import pickle, os, sys
 import numpy as np
 import matplotlib.pyplot as plt
 from pacman_env import PacmanEnv
 
-log_dir = "logs"
-with open(os.path.join(log_dir, "q_table.pkl"), "rb") as f:
+episodes_shortname = sys.argv[1]
+log_dir = f"logs/{episodes_shortname}_episodes"
+with open(os.path.join(log_dir, f"q_table_{episodes_shortname}.pkl"), "rb") as f:
     Q = pickle.load(f)
 
 env = PacmanEnv(grid_size=7)
@@ -42,5 +43,5 @@ plt.ylabel("row")
 plt.gca().invert_yaxis()
 plt.tight_layout()
 os.makedirs(log_dir, exist_ok=True)
-plt.savefig(os.path.join(log_dir, "q_heatmap.png"))
-print("Saved q_heatmap.png to", log_dir)
+plt.savefig(os.path.join(log_dir, f"q_heatmap_{episodes_shortname}.png"))
+print(f"Saved q_heatmap_{episodes_shortname}.png to", log_dir)

@@ -1,12 +1,12 @@
 # visualize_play.py
-import pickle, time, os
+import pickle, time, os, sys
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from pacman_env import PacmanEnv
 
-log_dir = "logs"
-with open(os.path.join(log_dir, "q_table.pkl"), "rb") as f:
+log_dir = f"logs/{sys.argv[1]}_episodes"
+with open(os.path.join(log_dir, f"q_table_{sys.argv[1]}.pkl"), "rb") as f:
     Q = pickle.load(f)
 
 env = PacmanEnv(grid_size=7)
