@@ -5,73 +5,60 @@ import numpy as np
 
 class PacmanEnv(gym.Env):
     """
-    Simple grid-based Pacman-like environment for RL experiments.
-    Grid contains:
-      - pacman (agent)
-      - three ghosts (adversaries)
-      - randomly placed walls (impassable)
-      - pellets (1 or 0) on each non-wall cell (except pacman start)
-    Actions: 0=UP,1=DOWN,2=LEFT,3=RIGHT
-    Observation: [pac_x, pac_y, ghost_coords..., pellets_flat, walls_flat]
-      ghost_coords is the concatenation of all ghost (x, y) pairs.
+    Compact Pacman-like environment designed for tabular Q-learning.
+    - Default grid_size small (11)
+    - Pellets are present but NOT encoded in full observation
+    - Observation returned to agent is a full raw vector (for flexibility),
+      but we provide a compact obs_to_state() helper in the training script.
+    - Ghosts move greedily toward Pacman (deterministic baseline).
     """
     metadata = {"render_modes": ["rgb_array"], "render_fps": 4}
 
-    def __init__(self, grid_size=10, num_ghosts=3, wall_density=0.15, fix_walls=True, walls=None):
+    def __init__(self, grid_size=11, num_ghosts=2, fixed_walls=None):
         super().__init__()
+        assert grid_size >= 7 and grid_size % 2 == 1, "use odd grid_size >= 7"
         self.grid_size = grid_size
         self.num_ghosts = num_ghosts
-        self.wall_density = wall_density
-        self.fix_walls = fix_walls
-        self.initial_walls = None
         self._fixed_walls_cache = None
-        if walls is not None:
-            walls = np.array(walls, dtype=np.int32)
+        if fixed_walls is not None:
+            walls = np.array(fixed_walls, dtype=np.int32)
             if walls.shape != (grid_size, grid_size):
                 raise ValueError("Provided walls must match grid_size.")
-            self.initial_walls = walls
             self._fixed_walls_cache = walls.copy()
-            self.fix_walls = True  # ensure consistent reuse when walls supplied
-        self.action_space = spaces.Discrete(4)
-        # obs: pac (2) + ghosts (2*num_ghosts) + pellets + walls (each grid_size*grid_size)
-        self.observation_space = spaces.Box(
-            low=0,
-            high=grid_size - 1,
-            shape=(
-                2 + 2 * num_ghosts + grid_size * grid_size + grid_size * grid_size,
-            ),
-            dtype=np.int32,
-        )
+        else:
+            self._fixed_walls_cache = self._create_simple_maze()
+
+        self.action_space = spaces.Discrete(4)  # up, down, left, right
+
+        # Raw observation (for debugging) - pac + ghosts + pellets + walls flattened
+        raw_len = 2 + 2 * self.num_ghosts + grid_size * grid_size + grid_size * grid_size
+        self.observation_space = spaces.Box(low=0, high=grid_size - 1, shape=(raw_len,), dtype=np.int32)
+
         self._init_positions()
         self.reset()
 
     def _init_positions(self):
-        self.start_pac = [0, 0]
-        # spread ghosts across remaining corners (avoids pacman start cell)
-        self.start_ghosts = [
-            [self.grid_size - 1, self.grid_size - 1],
-            [self.grid_size - 1, 0],
-            [0, self.grid_size - 1],
-        ][: self.num_ghosts]
+        self.start_pac = [self.grid_size - 2, self.grid_size // 2]
+        mid = self.grid_size // 2
+        # place ghosts near the top center area
+        starts = [[1, mid - 1], [1, mid + 1], [2, mid]]
+        self.start_ghosts = starts[: self.num_ghosts]
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.pacman = self.start_pac.copy()
         self.ghosts = np.array(self.start_ghosts, dtype=np.int32)
-        if self.fix_walls and self._fixed_walls_cache is not None:
-            self.walls = self._fixed_walls_cache.copy()
-        else:
-            self.walls = self._generate_walls()
-            if self.fix_walls:
-                self._fixed_walls_cache = self.walls.copy()
-        # ensure start cells are open even if provided walls had them blocked
-        self.walls[self.start_pac[0], self.start_pac[1]] = 0
+        self.walls = self._fixed_walls_cache.copy()
+        # ensure start cells are open
+        self.walls[self.pacman[0], self.pacman[1]] = 0
         for gr, gc in self.start_ghosts:
             self.walls[gr, gc] = 0
+
+        # pellets: 1 in every open cell except pacman start
         self.pellets = np.ones((self.grid_size, self.grid_size), dtype=np.int32)
-        self.pellets[self.pacman[0], self.pacman[1]] = 0
-        # pellets cannot exist on walls
         self.pellets[self.walls == 1] = 0
+        self.pellets[self.pacman[0], self.pacman[1]] = 0
+
         self.steps = 0
         obs = self._get_obs()
         info = {}
@@ -79,7 +66,7 @@ class PacmanEnv(gym.Env):
 
     def step(self, action):
         self.steps += 1
-        # apply pacman action
+        # pacman move attempt
         target = list(self.pacman)
         if action == 0:  # up
             target[0] = max(0, self.pacman[0] - 1)
@@ -89,51 +76,89 @@ class PacmanEnv(gym.Env):
             target[1] = max(0, self.pacman[1] - 1)
         elif action == 3:  # right
             target[1] = min(self.grid_size - 1, self.pacman[1] + 1)
-        # block on walls
-        if self.walls[target[0], target[1]] == 0:
-            self.pacman = target
 
-        reward = 0
+        reward = 0.0
         terminated = False
         truncated = False
 
-        # eat pellet if present
+        # small penalty per move to encourage efficiency
+        reward += -0.1
+
+        # hitting wall -> stay in place and penalty
+        if self.walls[target[0], target[1]] == 1:
+            reward += -0.5
+        else:
+            self.pacman = target
+
+        # eat pellet
         if self.pellets[self.pacman[0], self.pacman[1]] == 1:
-            reward += 10
+            reward += 5.0
             self.pellets[self.pacman[0], self.pacman[1]] = 0
 
-        # ghosts move randomly (simple baseline), blocked by walls
-        for g in range(len(self.ghosts)):
-            move = self.np_random.integers(0, 4)
-            target_g = list(self.ghosts[g])
-            if move == 0:
-                target_g[0] = max(0, self.ghosts[g, 0] - 1)
-            elif move == 1:
-                target_g[0] = min(self.grid_size - 1, self.ghosts[g, 0] + 1)
-            elif move == 2:
-                target_g[1] = max(0, self.ghosts[g, 1] - 1)
-            elif move == 3:
-                target_g[1] = min(self.grid_size - 1, self.ghosts[g, 1] + 1)
-            if self.walls[target_g[0], target_g[1]] == 0:
-                self.ghosts[g] = target_g
+        # ghosts move: greedy move that reduces Manhattan distance (deterministic)
+        for g_idx in range(len(self.ghosts)):
+            gx, gy = int(self.ghosts[g_idx, 0]), int(self.ghosts[g_idx, 1])
+            pr, pc = self.pacman
 
-        # collision check: any ghost catches pacman
-        if any((self.pacman[0] == g[0] and self.pacman[1] == g[1]) for g in self.ghosts):
-            reward -= 200
+            # prefer move along the larger coordinate difference
+            dr = pr - gx
+            dc = pc - gy
+            moves = []
+            if abs(dr) >= abs(dc):
+                # vertical preference
+                if dr < 0:
+                    moves.append((-1, 0))
+                elif dr > 0:
+                    moves.append((1, 0))
+                # then try horizontal
+                if dc < 0:
+                    moves.append((0, -1))
+                elif dc > 0:
+                    moves.append((0, 1))
+            else:
+                # horizontal preference
+                if dc < 0:
+                    moves.append((0, -1))
+                elif dc > 0:
+                    moves.append((0, 1))
+                if dr < 0:
+                    moves.append((-1, 0))
+                elif dr > 0:
+                    moves.append((1, 0))
+
+            # add fallback moves to allow movement if a greedy direction is blocked
+            moves += [(-1,0),(1,0),(0,-1),(0,1)]
+
+            moved = False
+            for d_r, d_c in moves:
+                tg_r, tg_c = gx + d_r, gy + d_c
+                if tg_r < 0 or tg_r >= self.grid_size or tg_c < 0 or tg_c >= self.grid_size:
+                    continue
+                if self.walls[tg_r, tg_c] == 0:
+                    self.ghosts[g_idx] = [tg_r, tg_c]
+                    moved = True
+                    break
+            if not moved:
+                # stuck - stay in place
+                pass
+
+        # collision check
+        if any((self.pacman[0] == int(g[0]) and self.pacman[1] == int(g[1])) for g in self.ghosts):
+            reward += -100.0
             terminated = True
 
-        # all pellets eaten
+        # win condition - all pellets eaten
         if np.sum(self.pellets) == 0:
-            reward += 100
+            reward += 200.0
             terminated = True
 
-        # optional step limit to avoid infinite episodes
-        if self.steps >= 1000:
+        # simple timeout
+        if self.steps >= 500:
             truncated = True
 
         obs = self._get_obs()
         info = {}
-        return obs, reward, terminated, truncated, info
+        return obs, float(reward), bool(terminated), bool(truncated), info
 
     def _get_obs(self):
         pac = np.array(self.pacman, dtype=np.int32)
@@ -142,59 +167,55 @@ class PacmanEnv(gym.Env):
         walls = self.walls.flatten().astype(np.int32)
         return np.concatenate([pac, ghosts, pellets, walls])
 
-    def _generate_walls(self):
-        """
-        Randomly generate walls with the given density, ensuring start cells are free.
-        """
-        walls = (self.np_random.random((self.grid_size, self.grid_size)) < self.wall_density).astype(np.int32)
-        # ensure start positions are free
-        walls[self.start_pac[0], self.start_pac[1]] = 0
-        for gr, gc in self.start_ghosts:
-            walls[gr, gc] = 0
+    def _create_simple_maze(self):
+        # smaller symmetric simple maze (no enclosed chambers)
+        s = self.grid_size
+        walls = np.zeros((s, s), dtype=np.int32)
+        walls[0,:] = 1
+        walls[-1,:] = 1
+        walls[:,0] = 1
+        walls[:,-1] = 1
+        mid = s // 2
+
+        # cross-shaped walls with gaps
+        walls[mid, 2:mid-1] = 1
+        walls[mid, mid+2:-2] = 1
+        walls[2:mid-1, mid] = 1
+        walls[mid+2:-2, mid] = 1
+
+        # carve openings so corners connect
+        walls[2, mid] = 0
+        walls[mid, 2] = 0
+        walls[-3, mid] = 0
+        walls[mid, -3] = 0
+
         return walls
 
     def render(self, mode="rgb_array"):
-        """
-        Returns an RGB numpy array representing the grid.
-        Colors:
-          - background: white
-          - pellet: small dark dot
-          - pacman: yellow square
-          - ghost: red square
-        """
-        cell = 20  # pixels per cell
+        cell = 20
         W = self.grid_size * cell
         img = 255 * np.ones((W, W, 3), dtype=np.uint8)
-
-        # draw pellets
+        # draw walls
         for r in range(self.grid_size):
             for c in range(self.grid_size):
-                if self.walls[r, c] == 1:
-                    r0, c0 = r * cell, c * cell
-                    img[r0:r0 + cell, c0:c0 + cell] = (20, 20, 20)  # dark wall
-                elif self.pellets[r, c] == 1:
+                if self.walls[r,c] == 1:
+                    img[r*cell:(r+1)*cell, c*cell:(c+1)*cell] = (30,30,30)
+                elif self.pellets[r,c] == 1:
                     cy = int((r + 0.5) * cell)
                     cx = int((c + 0.5) * cell)
-                    # small dot
-                    rr = slice(cy - 2, cy + 3)
-                    cc = slice(cx - 2, cx + 3)
-                    img[rr, cc] = (80, 80, 80)  # dark dot
-
-        # pacman square (yellow)
+                    rr = slice(cy-2, cy+3)
+                    cc = slice(cx-2, cx+3)
+                    img[rr, cc] = (80,80,80)
+        # pacman
         pr, pc = self.pacman
-        r0, c0 = pr * cell, pc * cell
-        img[r0 + 2:r0 + cell - 2, c0 + 2:c0 + cell - 2] = (255, 220, 0)
-
-        # ghost squares (red)
+        img[pr*cell+2:(pr+1)*cell-2, pc*cell+2:(pc+1)*cell-2] = (255,220,0)
+        # ghosts
         for gr, gc in self.ghosts:
-            r0, c0 = gr * cell, gc * cell
-            img[r0 + 2:r0 + cell - 2, c0 + 2:c0 + cell - 2] = (200, 0, 0)
-
+            img[int(gr)*cell+2:(int(gr)+1)*cell-2, int(gc)*cell+2:(int(gc)+1)*cell-2] = (200,0,0)
         # grid lines
         for k in range(1, self.grid_size):
-            img[k * cell - 1:k * cell + 1, :, :] = 220
-            img[:, k * cell - 1:k * cell + 1, :] = 220
-
+            img[k*cell-1:k*cell+1,:,:] = 220
+            img[:,k*cell-1:k*cell+1,:] = 220
         return img
 
     def seed(self, seed=None):
