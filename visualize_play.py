@@ -9,12 +9,13 @@ log_dir = f"logs/{sys.argv[1]}_episodes"
 with open(os.path.join(log_dir, f"q_table_{sys.argv[1]}.pkl"), "rb") as f:
     Q = pickle.load(f)
 
-# load walls if saved during training
+# load walls if saved during training (for backward compatibility)
 walls_path = os.path.join(log_dir, "walls.npy")
 walls = np.load(walls_path) if os.path.exists(walls_path) else None
-grid_size = walls.shape[0] if walls is not None else 15
+grid_size = walls.shape[0] if walls is not None else 21
 
-env = PacmanEnv(grid_size=grid_size, fix_walls=True, walls=walls)
+# Use fixed maze (walls parameter is optional for backward compatibility)
+env = PacmanEnv(grid_size=grid_size, walls=walls)
 env.seed(0)
 obs, _ = env.reset()
 state = tuple(int(x) for x in obs)

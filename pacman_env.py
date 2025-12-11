@@ -9,7 +9,7 @@ class PacmanEnv(gym.Env):
     Grid contains:
       - pacman (agent)
       - three ghosts (adversaries)
-      - randomly placed walls (impassable)
+      - symmetric Pacman-style maze walls (impassable, fixed layout)
       - pellets (1 or 0) on each non-wall cell (except pacman start)
     Actions: 0=UP,1=DOWN,2=LEFT,3=RIGHT
     Observation: [pac_x, pac_y, ghost_coords..., pellets_flat, walls_flat]
@@ -17,21 +17,19 @@ class PacmanEnv(gym.Env):
     """
     metadata = {"render_modes": ["rgb_array"], "render_fps": 4}
 
-    def __init__(self, grid_size=10, num_ghosts=3, wall_density=0.15, fix_walls=True, walls=None):
+    def __init__(self, grid_size=21, num_ghosts=3, walls=None):
         super().__init__()
         self.grid_size = grid_size
         self.num_ghosts = num_ghosts
-        self.wall_density = wall_density
-        self.fix_walls = fix_walls
-        self.initial_walls = None
         self._fixed_walls_cache = None
         if walls is not None:
             walls = np.array(walls, dtype=np.int32)
             if walls.shape != (grid_size, grid_size):
                 raise ValueError("Provided walls must match grid_size.")
-            self.initial_walls = walls
             self._fixed_walls_cache = walls.copy()
-            self.fix_walls = True  # ensure consistent reuse when walls supplied
+        else:
+            # Generate symmetric Pacman-style maze
+            self._fixed_walls_cache = self._create_pacman_maze()
         self.action_space = spaces.Discrete(4)
         # obs: pac (2) + ghosts (2*num_ghosts) + pellets + walls (each grid_size*grid_size)
         self.observation_space = spaces.Box(
@@ -46,25 +44,24 @@ class PacmanEnv(gym.Env):
         self.reset()
 
     def _init_positions(self):
-        self.start_pac = [0, 0]
-        # spread ghosts across remaining corners (avoids pacman start cell)
+        # Pacman starts near center-bottom (classic Pacman position)
+        self.start_pac = [self.grid_size - 2, self.grid_size // 2]
+        # Ghosts start in open corridor areas (top row, in gaps of horizontal walls)
+        # These positions are in the gap areas where row 2 has openings, ensuring ghosts can move down
+        mid = self.grid_size // 2
         self.start_ghosts = [
-            [self.grid_size - 1, self.grid_size - 1],
-            [self.grid_size - 1, 0],
-            [0, self.grid_size - 1],
+            [1, mid - 1],  # top-left of center gap (can move down through gap)
+            [1, mid],      # top-center (in gap of horizontal wall)
+            [1, mid + 1],  # top-right of center gap (can move down through gap)
         ][: self.num_ghosts]
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.pacman = self.start_pac.copy()
         self.ghosts = np.array(self.start_ghosts, dtype=np.int32)
-        if self.fix_walls and self._fixed_walls_cache is not None:
-            self.walls = self._fixed_walls_cache.copy()
-        else:
-            self.walls = self._generate_walls()
-            if self.fix_walls:
-                self._fixed_walls_cache = self.walls.copy()
-        # ensure start cells are open even if provided walls had them blocked
+        # Always use the fixed maze layout
+        self.walls = self._fixed_walls_cache.copy()
+        # ensure start cells are open
         self.walls[self.start_pac[0], self.start_pac[1]] = 0
         for gr, gc in self.start_ghosts:
             self.walls[gr, gc] = 0
@@ -89,13 +86,16 @@ class PacmanEnv(gym.Env):
             target[1] = max(0, self.pacman[1] - 1)
         elif action == 3:  # right
             target[1] = min(self.grid_size - 1, self.pacman[1] + 1)
-        # block on walls
-        if self.walls[target[0], target[1]] == 0:
-            self.pacman = target
-
+        
         reward = 0
         terminated = False
         truncated = False
+        
+        # negative reward for hitting walls
+        if self.walls[target[0], target[1]] == 1:
+            reward -= 50  # penalty for trying to move into wall
+        else:
+            self.pacman = target
 
         # eat pellet if present
         if self.pellets[self.pacman[0], self.pacman[1]] == 1:
@@ -142,15 +142,96 @@ class PacmanEnv(gym.Env):
         walls = self.walls.flatten().astype(np.int32)
         return np.concatenate([pac, ghosts, pellets, walls])
 
-    def _generate_walls(self):
+    def _create_pacman_maze(self):
         """
-        Randomly generate walls with the given density, ensuring start cells are free.
+        Create a simple symmetric maze with a plus shape in center, horizontal and vertical walls with gaps.
+        Guarantees no closed chambers - every area has multiple exits.
+        Returns a fixed maze layout that's the same every time.
         """
-        walls = (self.np_random.random((self.grid_size, self.grid_size)) < self.wall_density).astype(np.int32)
-        # ensure start positions are free
-        walls[self.start_pac[0], self.start_pac[1]] = 0
-        for gr, gc in self.start_ghosts:
-            walls[gr, gc] = 0
+        # 21x21 symmetric Pacman-style layout (no closed chambers, real plus sign)
+        walls = np.zeros((self.grid_size, self.grid_size), dtype=np.int32)
+
+        # Outer border
+        walls[0, :] = 1
+        walls[-1, :] = 1
+        walls[:, 0] = 1
+        walls[:, -1] = 1
+
+        mid = self.grid_size // 2  # 10 for 21x21
+
+        # -------- TRUE PLUS SIGN IN THE CENTER --------
+        # Horizontal arms (leave a wide center gap so all quadrants connect)
+        walls[mid, 3:9] = 1     # left arm (cols 3..8)
+        walls[mid, 13:19] = 1   # right arm (cols 13..18)
+        # Vertical arms
+        walls[3:9, mid] = 1     # top arm (rows 3..8)
+        walls[13:19, mid] = 1   # bottom arm (rows 13..18)
+        # The center block rows 9..12 and cols 9..12 remain open (wide center opening)
+
+        # -------- LARGE CORRIDORS / RINGS (with big center gaps) --------
+        # Horizontal corridor walls (rows 5 and 15) but leave wide center opening
+        walls[5, 1:-1] = 1
+        walls[5, 7:14] = 0     # open span across the middle (cols 7..13)
+        walls[15, 1:-1] = 1
+        walls[15, 7:14] = 0
+
+        # Vertical corridor walls (cols 5 and 15) but leave wide center opening
+        walls[1:-1, 5] = 1
+        walls[7:14, 5] = 0     # open span across the middle (rows 7..13)
+        walls[1:-1, 15] = 1
+        walls[7:14, 15] = 0
+
+        # -------- CORNER CONNECTIONS (prevent closed chambers) --------
+        # Make small openings that connect corner regions to the main corridors
+        # (these ensure there are no sealed rooms in corners)
+        walls[1, 5] = 0
+        walls[2, 5] = 0
+        walls[5, 2] = 0
+        walls[5, 1] = 0
+        walls[1, 15] = 0
+        walls[2, 15] = 0
+        walls[15, 1] = 0
+        walls[15, 2] = 0
+        walls[5, 18] = 0
+        walls[5, 19] = 0
+        walls[18, 5] = 0
+        walls[19, 5] = 0
+        walls[18, 15] = 0
+        walls[18, 10] = 0
+        walls[19, 15] = 0
+        walls[15, 18] = 0
+        walls[15, 19] = 0
+        walls[5, 6] = 0
+        walls[6, 5] = 0
+        walls[5, 14] = 0
+        walls[6, 15] = 0
+        walls[5, 14] = 0
+        walls[14, 5] = 0
+        walls[15, 14] = 0
+        walls[15, 6] = 0
+        walls[14, 15] = 0
+        walls[18, 11] = 0
+        walls[10, 12] = 1
+        walls[10, 18] = 0
+        walls[12, 10] = 1
+
+
+        # -------- OPTIONAL STYLE BLOCKS (purely decorative, not enclosed) --------
+        # small symmetric blocks near corners for classic look, but we keep openings so they don't trap Pacman
+        # walls[3:5, 3:5] = 1
+        # walls[3:5, 16:18] = 1
+        # walls[16:18, 3:5] = 1
+        # walls[16:18, 16:18] = 1
+        # # ensure the immediate neighbors of these blocks remain open to avoid isolation
+        # walls[3, 5] = 0
+        # walls[5, 3] = 0
+        # walls[3, 15] = 0
+        # walls[5, 16] = 0
+        # walls[16, 3] = 0
+        # walls[15, 5] = 0
+        # walls[16, 15] = 0
+        # walls[15, 16] = 0
+        
         return walls
 
     def render(self, mode="rgb_array"):

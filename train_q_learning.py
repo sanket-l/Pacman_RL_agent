@@ -1,11 +1,11 @@
 # train_q_learning.py
 import numpy as np
-import pickle, csv, os
+import pickle, csv, os, sys
 from pacman_env import PacmanEnv
 from collections import defaultdict
 import matplotlib.pyplot as plt
 
-env = PacmanEnv(grid_size=15, fix_walls=True)
+env = PacmanEnv(grid_size=21)
 env.seed(0)
 
 def obs_to_state(obs):
@@ -15,7 +15,8 @@ def obs_to_state(obs):
 Q = defaultdict(lambda: np.zeros(env.action_space.n))
 
 # hyperparams
-episodes = 500
+episodes_shortname = sys.argv[1]
+episodes = int(episodes_shortname)
 alpha = 0.1
 gamma = 0.99
 epsilon = 1.0
