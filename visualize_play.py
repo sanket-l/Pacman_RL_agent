@@ -3,48 +3,55 @@ import pickle, time, os, sys
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from config import GRID_SIZE
 from pacman_env import PacmanEnv
 
-log_dir = f"logs/{sys.argv[1]}_episodes"
-with open(os.path.join(log_dir, f"q_table_{sys.argv[1]}.pkl"), "rb") as f:
+if len(sys.argv) < 2:
+    print("Usage: python visualize_play.py <episodes_shortname>")
+    sys.exit(1)
+
+ep_short = sys.argv[1]
+log_dir = f"logs/{ep_short}_episodes"
+q_path = os.path.join(log_dir, f"q_table_{ep_short}.pkl")
+if not os.path.exists(q_path):
+    # try alternative filename without suffix
+    q_path = os.path.join(log_dir, f"q_table_{ep_short}.pkl")
+if not os.path.exists(q_path):
+    print("Q-table not found:", q_path)
+    sys.exit(1)
+
+with open(q_path, "rb") as f:
     Q = pickle.load(f)
 
-grid_size=GRID_SIZE
-# load walls if saved during training (for backward compatibility)
+# try to load walls if present
 walls_path = os.path.join(log_dir, "walls.npy")
 walls = np.load(walls_path) if os.path.exists(walls_path) else None
-grid_size = walls.shape[0] if walls is not None else grid_size
+grid_size = walls.shape[0] if walls is not None else None
 
-# Use fixed maze (walls parameter is optional for backward compatibility)
-env = PacmanEnv(grid_size=grid_size, walls=walls)
+# create env
+if grid_size is not None:
+    env = PacmanEnv(grid_size=grid_size, walls=walls)
+else:
+    env = PacmanEnv()
 env.seed(0)
+
+frames = []
 obs, _ = env.reset()
 state = tuple(int(x) for x in obs)
 
-frames = []
-max_steps = 10000  # safeguard in case no win; can be increased
+max_steps = 2000
 for t in range(max_steps):
-    # greedy action
     if state in Q:
         action = int(np.argmax(Q[state]))
     else:
         action = env.action_space.sample()
-
     obs, reward, terminated, truncated, _ = env.step(action)
     img = env.render(mode="rgb_array")
     frames.append(img)
     state = tuple(int(x) for x in obs)
-
     if terminated or truncated:
-        # win if all pellets are gone
-        if np.sum(env.pellets) == 0:
-            break  # stop visualization on win
-        # otherwise restart episode and keep visualizing
-        obs, _ = env.reset()
-        state = tuple(int(x) for x in obs)
+        break
 
-# animate with matplotlib
+# animate
 fig = plt.figure(figsize=(4,4))
 im = plt.imshow(frames[0])
 plt.axis("off")
@@ -53,11 +60,13 @@ def update(i):
     im.set_array(frames[i])
     return (im,)
 
-ani = animation.FuncAnimation(fig, update, frames=len(frames), interval=50, blit=True)
-# show
+ani = animation.FuncAnimation(fig, update, frames=len(frames), interval=80, blit=True)
 plt.show()
 
-# optionally save mp4 (requires ffmpeg)
+# optionally save mp4
 save_path = os.path.join(log_dir, "playback.mp4")
-ani.save(save_path, writer="ffmpeg", fps=60)
-print("Saved playback to", save_path)
+try:
+    ani.save(save_path, writer="ffmpeg", fps=12)
+    print("Saved playback to", save_path)
+except Exception as e:
+    print("Could not save mp4 (ffmpeg may be missing):", e)
