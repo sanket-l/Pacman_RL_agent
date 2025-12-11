@@ -17,7 +17,7 @@ class PacmanEnv(gym.Env):
     """
     metadata = {"render_modes": ["rgb_array"], "render_fps": 4}
 
-    def __init__(self, grid_size=21, num_ghosts=3, walls=None):
+    def __init__(self, grid_size=21, num_ghosts=2, walls=None):
         super().__init__()
         self.grid_size = grid_size
         self.num_ghosts = num_ghosts
@@ -51,8 +51,8 @@ class PacmanEnv(gym.Env):
         mid = self.grid_size // 2
         self.start_ghosts = [
             [1, mid - 1],  # top-left of center gap (can move down through gap)
-            [1, mid],      # top-center (in gap of horizontal wall)
             [1, mid + 1],  # top-right of center gap (can move down through gap)
+            [1, mid],      # top-center (in gap of horizontal wall)
         ][: self.num_ghosts]
 
     def reset(self, *, seed=None, options=None):
@@ -87,19 +87,27 @@ class PacmanEnv(gym.Env):
         elif action == 3:  # right
             target[1] = min(self.grid_size - 1, self.pacman[1] + 1)
         
-        reward = 0
+        max_steps = 700
+        reward = -0.05                 # per-step base (keep this)
+        hit_wall_reward = -1           # punish trying to move into a wall
+        eat_pellet_reward = 20         # keep pellet reward
+        ghost_catch_reward = -200      # keep ghost penalty
+        all_pellets_eaten_reward = 500 # keep win reward
+        step_limit_reward = -0.1       # much smaller truncation penalty
+
+
         terminated = False
         truncated = False
         
         # negative reward for hitting walls
         if self.walls[target[0], target[1]] == 1:
-            reward -= 50  # penalty for trying to move into wall
+            reward += hit_wall_reward  # penalty for trying to move into wall
         else:
             self.pacman = target
 
         # eat pellet if present
         if self.pellets[self.pacman[0], self.pacman[1]] == 1:
-            reward += 10
+            reward += eat_pellet_reward
             self.pellets[self.pacman[0], self.pacman[1]] = 0
 
         # ghosts move randomly (simple baseline), blocked by walls
@@ -119,16 +127,17 @@ class PacmanEnv(gym.Env):
 
         # collision check: any ghost catches pacman
         if any((self.pacman[0] == g[0] and self.pacman[1] == g[1]) for g in self.ghosts):
-            reward -= 200
+            reward += ghost_catch_reward
             terminated = True
 
         # all pellets eaten
         if np.sum(self.pellets) == 0:
-            reward += 100
+            reward += all_pellets_eaten_reward
             terminated = True
 
         # optional step limit to avoid infinite episodes
-        if self.steps >= 1000:
+        if self.steps >= max_steps:
+            reward += step_limit_reward
             truncated = True
 
         obs = self._get_obs()
@@ -214,23 +223,6 @@ class PacmanEnv(gym.Env):
         walls[10, 12] = 1
         walls[10, 18] = 0
         walls[12, 10] = 1
-
-
-        # -------- OPTIONAL STYLE BLOCKS (purely decorative, not enclosed) --------
-        # small symmetric blocks near corners for classic look, but we keep openings so they don't trap Pacman
-        # walls[3:5, 3:5] = 1
-        # walls[3:5, 16:18] = 1
-        # walls[16:18, 3:5] = 1
-        # walls[16:18, 16:18] = 1
-        # # ensure the immediate neighbors of these blocks remain open to avoid isolation
-        # walls[3, 5] = 0
-        # walls[5, 3] = 0
-        # walls[3, 15] = 0
-        # walls[5, 16] = 0
-        # walls[16, 3] = 0
-        # walls[15, 5] = 0
-        # walls[16, 15] = 0
-        # walls[15, 16] = 0
         
         return walls
 
