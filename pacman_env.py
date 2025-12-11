@@ -34,9 +34,10 @@ class PacmanEnv(gym.Env):
         # obs: pac (2) + ghosts (2*num_ghosts) + pellets + walls (each grid_size*grid_size)
         self.observation_space = spaces.Box(
             low=0,
-            high=grid_size - 1,
-            shape=(
-                2 + 2 * num_ghosts + grid_size * grid_size + grid_size * grid_size,
+            high=np.array(
+                [grid_size - 1] * (2 + 2 * num_ghosts) +
+                [1] * (grid_size * grid_size) + 
+                [1] * (grid_size * grid_size)
             ),
             dtype=np.int32,
         )
@@ -87,7 +88,7 @@ class PacmanEnv(gym.Env):
         elif action == 3:  # right
             target[1] = min(self.grid_size - 1, self.pacman[1] + 1)
         
-        max_steps = 700
+        max_steps = 2000
         reward = -0.05                 # per-step base (keep this)
         hit_wall_reward = -1           # punish trying to move into a wall
         eat_pellet_reward = 20         # keep pellet reward
