@@ -3,6 +3,8 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
+from config import GRID_SIZE, NUM_GHOSTS, SKIP_WALLS
+
 class PacmanEnv(gym.Env):
     """
     Simple grid-based Pacman-like environment for RL experiments.
@@ -17,7 +19,7 @@ class PacmanEnv(gym.Env):
     """
     metadata = {"render_modes": ["rgb_array"], "render_fps": 4}
 
-    def __init__(self, grid_size=21, num_ghosts=2, walls=None):
+    def __init__(self, grid_size=GRID_SIZE, num_ghosts=NUM_GHOSTS, walls=None):
         super().__init__()
         self.grid_size = grid_size
         self.num_ghosts = num_ghosts
@@ -167,63 +169,64 @@ class PacmanEnv(gym.Env):
         walls[:, 0] = 1
         walls[:, -1] = 1
 
-        mid = self.grid_size // 2  # 10 for 21x21
+        if not SKIP_WALLS:
+            mid = self.grid_size // 2  # 10 for 21x21
 
-        # -------- TRUE PLUS SIGN IN THE CENTER --------
-        # Horizontal arms (leave a wide center gap so all quadrants connect)
-        walls[mid, 3:9] = 1     # left arm (cols 3..8)
-        walls[mid, 13:19] = 1   # right arm (cols 13..18)
-        # Vertical arms
-        walls[3:9, mid] = 1     # top arm (rows 3..8)
-        walls[13:19, mid] = 1   # bottom arm (rows 13..18)
-        # The center block rows 9..12 and cols 9..12 remain open (wide center opening)
+            # -------- TRUE PLUS SIGN IN THE CENTER --------
+            # Horizontal arms (leave a wide center gap so all quadrants connect)
+            walls[mid, 3:9] = 1     # left arm (cols 3..8)
+            walls[mid, 13:19] = 1   # right arm (cols 13..18)
+            # Vertical arms
+            walls[3:9, mid] = 1     # top arm (rows 3..8)
+            walls[13:19, mid] = 1   # bottom arm (rows 13..18)
+            # The center block rows 9..12 and cols 9..12 remain open (wide center opening)
 
-        # -------- LARGE CORRIDORS / RINGS (with big center gaps) --------
-        # Horizontal corridor walls (rows 5 and 15) but leave wide center opening
-        walls[5, 1:-1] = 1
-        walls[5, 7:14] = 0     # open span across the middle (cols 7..13)
-        walls[15, 1:-1] = 1
-        walls[15, 7:14] = 0
+            # -------- LARGE CORRIDORS / RINGS (with big center gaps) --------
+            # Horizontal corridor walls (rows 5 and 15) but leave wide center opening
+            walls[5, 1:-1] = 1
+            walls[5, 7:14] = 0     # open span across the middle (cols 7..13)
+            walls[15, 1:-1] = 1
+            walls[15, 7:14] = 0
 
-        # Vertical corridor walls (cols 5 and 15) but leave wide center opening
-        walls[1:-1, 5] = 1
-        walls[7:14, 5] = 0     # open span across the middle (rows 7..13)
-        walls[1:-1, 15] = 1
-        walls[7:14, 15] = 0
+            # Vertical corridor walls (cols 5 and 15) but leave wide center opening
+            walls[1:-1, 5] = 1
+            walls[7:14, 5] = 0     # open span across the middle (rows 7..13)
+            walls[1:-1, 15] = 1
+            walls[7:14, 15] = 0
 
-        # -------- CORNER CONNECTIONS (prevent closed chambers) --------
-        # Make small openings that connect corner regions to the main corridors
-        # (these ensure there are no sealed rooms in corners)
-        walls[1, 5] = 0
-        walls[2, 5] = 0
-        walls[5, 2] = 0
-        walls[5, 1] = 0
-        walls[1, 15] = 0
-        walls[2, 15] = 0
-        walls[15, 1] = 0
-        walls[15, 2] = 0
-        walls[5, 18] = 0
-        walls[5, 19] = 0
-        walls[18, 5] = 0
-        walls[19, 5] = 0
-        walls[18, 15] = 0
-        walls[18, 10] = 0
-        walls[19, 15] = 0
-        walls[15, 18] = 0
-        walls[15, 19] = 0
-        walls[5, 6] = 0
-        walls[6, 5] = 0
-        walls[5, 14] = 0
-        walls[6, 15] = 0
-        walls[5, 14] = 0
-        walls[14, 5] = 0
-        walls[15, 14] = 0
-        walls[15, 6] = 0
-        walls[14, 15] = 0
-        walls[18, 11] = 0
-        walls[10, 12] = 1
-        walls[10, 18] = 0
-        walls[12, 10] = 1
+            # -------- CORNER CONNECTIONS (prevent closed chambers) --------
+            # Make small openings that connect corner regions to the main corridors
+            # (these ensure there are no sealed rooms in corners)
+            walls[1, 5] = 0
+            walls[2, 5] = 0
+            walls[5, 2] = 0
+            walls[5, 1] = 0
+            walls[1, 15] = 0
+            walls[2, 15] = 0
+            walls[15, 1] = 0
+            walls[15, 2] = 0
+            walls[5, 18] = 0
+            walls[5, 19] = 0
+            walls[18, 5] = 0
+            walls[19, 5] = 0
+            walls[18, 15] = 0
+            walls[18, 10] = 0
+            walls[19, 15] = 0
+            walls[15, 18] = 0
+            walls[15, 19] = 0
+            walls[5, 6] = 0
+            walls[6, 5] = 0
+            walls[5, 14] = 0
+            walls[6, 15] = 0
+            walls[5, 14] = 0
+            walls[14, 5] = 0
+            walls[15, 14] = 0
+            walls[15, 6] = 0
+            walls[14, 15] = 0
+            walls[18, 11] = 0
+            walls[10, 12] = 1
+            walls[10, 18] = 0
+            walls[12, 10] = 1
         
         return walls
 

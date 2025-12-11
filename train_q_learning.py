@@ -1,9 +1,11 @@
-# train_q_learning_compact.py
+# train_q_learning.py
 import numpy as np
 import pickle, csv, os, sys
+from config import GRID_SIZE
 from pacman_env import PacmanEnv
-from collections import defaultdict, deque
+from collections import defaultdict
 import matplotlib.pyplot as plt
+import itertools
 
 # ----------------------
 # compact state encoder
@@ -16,18 +18,14 @@ def sign3(x):
         return 1
     return 0
 
-def obs_to_compact_state(obs, grid_size, num_ghosts):
+def obs_to_state(obs, grid_size, num_ghosts):
     """
-    Map the full obs vector to a small discrete state tuple:
+    Compact discrete state tuple:
     (pac_r, pac_c,
       for each ghost: dx_clipped + 3, dy_clipped + 3,
       pellet_dir_r + 1, pellet_dir_c + 1,   # mapped to {0,1,2}
       pellets_bucket)
-    dx_clipped in [-3..3] mapped to 0..6
-    pellet_dir in {-1,0,1} mapped to 0..2
-    pellets_bucket in {0,1,2,3}
     """
-    # obs layout: [pac(2), ghosts(2*num_ghosts), pellets(grid^2), walls(grid^2)]
     pac_r = int(obs[0])
     pac_c = int(obs[1])
     ghosts_offset = 2
@@ -42,7 +40,6 @@ def obs_to_compact_state(obs, grid_size, num_ghosts):
         gy = int(obs[ghosts_offset + 2 * g + 1])
         dx = gx - pac_r
         dy = gy - pac_c
-        # clip to [-3, 3]
         dx = max(-3, min(3, dx))
         dy = max(-3, min(3, dy))
         ghost_components.append(dx + 3)  # 0..6
@@ -53,7 +50,6 @@ def obs_to_compact_state(obs, grid_size, num_ghosts):
     if pellet_positions.shape[0] == 0:
         pdr, pdc = 0, 0
     else:
-        # choose nearest by manhattan distance
         dists = np.abs(pellet_positions - np.array([pac_r, pac_c])).sum(axis=1)
         idx = np.argmin(dists)
         pr, pc = pellet_positions[idx]
@@ -61,7 +57,7 @@ def obs_to_compact_state(obs, grid_size, num_ghosts):
         pdc = sign3(pc - pac_c)   # -1,0,1
 
     # remaining pellets bucket (coarse)
-    remaining = pellets_positions_count = int(pellets_grid.sum())
+    remaining = int(pellets_grid.sum())
     if remaining == 0:
         bucket = 0
     elif remaining <= 5:
@@ -71,18 +67,20 @@ def obs_to_compact_state(obs, grid_size, num_ghosts):
     else:
         bucket = 3
 
-    # build tuple (all ints, small range)
     state = (pac_r, pac_c) + tuple(ghost_components) + (pdr + 1, pdc + 1, bucket)
     return tuple(int(x) for x in state)
 
 # ----------------------
-# training script
+# utilities
 # ----------------------
 def moving_average(x, w):
     if len(x) < w:
         return np.array(x)
     return np.convolve(x, np.ones(w) / w, mode="valid")
 
+# ----------------------
+# training script
+# ----------------------
 def main():
     if len(sys.argv) < 2:
         print("Usage: python train_q_learning.py <episodes>")
@@ -90,21 +88,21 @@ def main():
 
     episodes = int(sys.argv[1])
 
-    # create env (keep defaults or change)
-    grid_size = 21
-    num_ghosts = 1   # set to match your env usage
+    # create env
+    grid_size=GRID_SIZE
+    num_ghosts = 1
     env = PacmanEnv(grid_size=grid_size, num_ghosts=num_ghosts)
     env.seed(0)
 
     # Q-table
     Q = defaultdict(lambda: np.zeros(env.action_space.n, dtype=np.float32))
 
-    # hyperparams (conservative stable choices)
+    # hyperparams
     alpha = 0.03
     gamma = 0.99
     epsilon = 1.0
     epsilon_min = 0.02
-    epsilon_decay = 0.9995   # slow multiplicative decay
+    epsilon_decay = 0.9995
 
     # sensible max_steps derived from free cells
     free_cells = int(np.sum(env._fixed_walls_cache == 0))
@@ -117,18 +115,18 @@ def main():
 
     metrics = {"episode": [], "reward": [], "length": [], "epsilon": [], "pellets": [], "wins": []}
 
+    pellets_offset = 2 + 2 * num_ghosts
+
     # training loop
     for ep in range(1, episodes + 1):
         obs, _ = env.reset()
-        state = obs_to_compact_state(obs, grid_size, num_ghosts)
+        state = obs_to_state(obs, grid_size, num_ghosts)
         total_reward = 0.0
         length = 0
         pellets_eaten = 0
 
         # pellet counting via grid diff
-        pellets_offset = 2 + 2 * num_ghosts
         prev_pellet_grid = obs[pellets_offset:pellets_offset + grid_size * grid_size].copy().astype(np.int32).reshape((grid_size, grid_size))
-        initial_pellets = int(prev_pellet_grid.sum())
 
         terminated = False
         truncated = False
@@ -150,7 +148,7 @@ def main():
             prev_pellet_grid = curr_pellet_grid
 
             done = bool(terminated or truncated)
-            next_state = obs_to_compact_state(obs, grid_size, num_ghosts)
+            next_state = obs_to_state(obs, grid_size, num_ghosts)
 
             # Q update with terminal handling
             best_next = float(np.max(Q[next_state])) if next_state in Q else 0.0
@@ -197,31 +195,105 @@ def main():
         for i in range(len(metrics["episode"])):
             writer.writerow([metrics["episode"][i], metrics["reward"][i], metrics["length"][i], metrics["epsilon"][i], metrics["pellets"][i], metrics["wins"][i]])
 
-    # plotting: smoothed pellets and win-rate
+    # -------------------------
+    # 1) Pellets eaten vs episodes (smoothed)
+    # -------------------------
     window = 200
     episodes_arr = np.array(metrics["episode"])
     pellets_arr = np.array(metrics["pellets"])
     pellets_sm = moving_average(pellets_arr, window)
 
-    wins_arr = np.array(metrics["wins"])
-    win_rate_sm = moving_average(wins_arr, window)
-
-    plt.figure(figsize=(10,4))
-    plt.subplot(1,2,1)
+    plt.figure(figsize=(8,4))
     plt.plot(episodes_arr, pellets_arr, alpha=0.25, label="raw pellets")
     if len(pellets_sm) > 0:
         plt.plot(episodes_arr[window-1:], pellets_sm, label=f"smoothed pellets (w={window})", linewidth=2)
     plt.xlabel("Episode"); plt.ylabel("Pellets eaten"); plt.grid(True); plt.legend()
+    plt.title("Pellets eaten per episode")
+    plt.tight_layout()
+    plt.savefig(os.path.join(log_dir, f"learning_pellets_{episodes}.png"))
+    plt.close()
 
-    plt.subplot(1,2,2)
+    # -------------------------
+    # 2) Rewards per episode (bar) with smoothed overlay
+    # -------------------------
+    rewards_arr = np.array(metrics["reward"])
+    rewards_sm = moving_average(rewards_arr, window)
+    plt.figure(figsize=(10,4))
+    plt.bar(episodes_arr, rewards_arr, alpha=0.4, label="reward per episode")
+    if len(rewards_sm) > 0:
+        plt.plot(episodes_arr[window-1:], rewards_sm, color="red", linewidth=2, label=f"smoothed reward (w={window})")
+    plt.xlabel("Episode"); plt.ylabel("Total reward"); plt.title("Rewards per episode")
+    plt.legend(); plt.grid(True); plt.tight_layout()
+    plt.savefig(os.path.join(log_dir, f"rewards_bar_{episodes}.png"))
+    plt.close()
+
+    # -------------------------
+    # 3) Win rate (smoothed)
+    # -------------------------
+    wins_arr = np.array(metrics["wins"])
+    win_rate_sm = moving_average(wins_arr, window)
+    plt.figure(figsize=(8,4))
     if len(win_rate_sm) > 0:
-        plt.plot(episodes_arr[window-1:], win_rate_sm, label=f"win rate (w={window})")
-    plt.xlabel("Episode"); plt.ylabel("Win rate"); plt.grid(True); plt.legend()
+        plt.plot(episodes_arr[window-1:], win_rate_sm, label=f"win rate (w={window})", linewidth=2)
+    plt.xlabel("Episode"); plt.ylabel("Win rate"); plt.title("Win rate (moving average)")
+    plt.grid(True); plt.legend(); plt.tight_layout()
+    plt.savefig(os.path.join(log_dir, f"winrate_{episodes}.png"))
+    plt.close()
 
-    plt.suptitle("Learning (compact-state Q-learning)")
-    plt.tight_layout(rect=[0,0,1,0.96])
-    plt.savefig(os.path.join(log_dir, f"learning_{episodes}.png"))
-    print("Saved results in", log_dir)
+    # -------------------------
+    # 4) Q-value heatmap (avg max-Q per pacman cell)
+    #    Our compact-state keys are:
+    #    (pac_r, pac_c, ghost_dx+3, ghost_dy+3, pdr+1, pdc+1, bucket)
+    #    We average max-Q over all ghost dx/dy, pellet dirs, and buckets.
+    # -------------------------
+    n = grid_size
+    heatmap = np.full((n, n), np.nan, dtype=float)
+
+    # iterate over pac positions
+    for pr in range(n):
+        for pc in range(n):
+            vals = []
+            # iterate over ghost relative positions (dx,dy in -3..3 -> mapped to 0..6)
+            for dx, dy in itertools.product(range(-3, 4), range(-3, 4)):
+                gdx = dx + 3
+                gdy = dy + 3
+                # pellet directions (-1,0,1) -> mapped to 0..2
+                for pdr in (-1, 0, 1):
+                    for pdc in (-1, 0, 1):
+                        for bucket in (0,1,2,3):
+                            st = (pr, pc, gdx, gdy, pdr + 1, pdc + 1, bucket)
+                            if st in Q:
+                                vals.append(np.max(Q[st]))
+            if vals:
+                heatmap[pr, pc] = float(np.mean(vals))
+            else:
+                heatmap[pr, pc] = np.nan
+
+    plt.figure(figsize=(6,6))
+    plt.imshow(heatmap, origin="upper")
+    plt.colorbar(label="avg max Q")
+    plt.title("Heatmap: Avg max-Q per Pacman position (compact-state average)")
+    plt.xlabel("col"); plt.ylabel("row")
+    plt.gca().invert_yaxis()
+    plt.tight_layout()
+    plt.savefig(os.path.join(log_dir, f"q_heatmap_{episodes}.png"))
+    plt.close()
+
+     # -------------------------
+    # 4) Epsilon decay graph
+    # -------------------------
+    eps_arr = np.array(metrics["epsilon"])
+    plt.figure(figsize=(8,4))
+    plt.plot(episodes_arr, eps_arr, linewidth=2)
+    plt.xlabel("Episode")
+    plt.ylabel("Epsilon")
+    plt.title("Epsilon decay over episodes")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(log_dir, f"epsilon_decay_{episodes}.png"))
+    plt.close()
+
+    print("Saved images to", log_dir)
 
 if __name__ == "__main__":
     main()

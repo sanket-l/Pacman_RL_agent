@@ -1,0 +1,3 @@
+GRID_SIZE = 21
+NUM_GHOSTS = 3
+SKIP_WALLS = False

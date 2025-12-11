@@ -3,16 +3,18 @@ import pickle, time, os, sys
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from config import GRID_SIZE
 from pacman_env import PacmanEnv
 
 log_dir = f"logs/{sys.argv[1]}_episodes"
 with open(os.path.join(log_dir, f"q_table_{sys.argv[1]}.pkl"), "rb") as f:
     Q = pickle.load(f)
 
+grid_size=GRID_SIZE
 # load walls if saved during training (for backward compatibility)
 walls_path = os.path.join(log_dir, "walls.npy")
 walls = np.load(walls_path) if os.path.exists(walls_path) else None
-grid_size = walls.shape[0] if walls is not None else 21
+grid_size = walls.shape[0] if walls is not None else grid_size
 
 # Use fixed maze (walls parameter is optional for backward compatibility)
 env = PacmanEnv(grid_size=grid_size, walls=walls)
