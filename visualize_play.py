@@ -1,4 +1,4 @@
-# visualize_play.py
+# visualize_win.py
 import pickle, time, os, sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,54 +10,61 @@ log_dir = f"logs/{sys.argv[1]}_episodes"
 with open(os.path.join(log_dir, f"q_table_{sys.argv[1]}.pkl"), "rb") as f:
     Q = pickle.load(f)
 
-grid_size=GRID_SIZE
-# load walls if saved during training (for backward compatibility)
+# load walls
 walls_path = os.path.join(log_dir, "walls.npy")
 walls = np.load(walls_path) if os.path.exists(walls_path) else None
-grid_size = walls.shape[0] if walls is not None else grid_size
+grid_size = walls.shape[0] if walls is not None else GRID_SIZE
 
-# Use fixed maze (walls parameter is optional for backward compatibility)
 env = PacmanEnv(grid_size=grid_size, walls=walls)
-env.seed(0)
-obs, _ = env.reset()
-state = tuple(int(x) for x in obs)
 
-frames = []
-max_steps = 10000  # safeguard in case no win; can be increased
-for t in range(max_steps):
-    # greedy action
-    if state in Q:
-        action = int(np.argmax(Q[state]))
-    else:
-        action = env.action_space.sample()
+win_frames = None
+max_search_episodes = 5000
 
-    obs, reward, terminated, truncated, _ = env.step(action)
-    img = env.render(mode="rgb_array")
-    frames.append(img)
+for ep in range(max_search_episodes):
+    if ep % 100 == 0:
+        print(ep)
+    obs, _ = env.reset()
     state = tuple(int(x) for x in obs)
 
-    if terminated or truncated:
-        # win if all pellets are gone
-        if np.sum(env.pellets) == 0:
-            break  # stop visualization on win
-        # otherwise restart episode and keep visualizing
-        obs, _ = env.reset()
-        state = tuple(int(x) for x in obs)
+    frames = []
+    done = False
 
-# animate with matplotlib
+    while not done:
+        # greedy action
+        action = np.argmax(Q[state]) if state in Q else env.action_space.sample()
+        
+        obs, reward, terminated, truncated, _ = env.step(action)
+        frame = env.render(mode="rgb_array")
+        frames.append(frame)
+
+        state = tuple(int(x) for x in obs)
+        done = terminated or truncated
+
+        # check win
+        if done and np.sum(env.pellets) < 50:
+            win_frames = frames
+            print("Found a winning episode at episode", ep)
+            break
+
+    if win_frames is not None:
+        break
+
+if win_frames is None:
+    print("No win found. Try increasing max_search_episodes.")
+    sys.exit(0)
+
+# Animate only the winning frames
 fig = plt.figure(figsize=(4,4))
-im = plt.imshow(frames[0])
+im = plt.imshow(win_frames[0])
 plt.axis("off")
 
 def update(i):
-    im.set_array(frames[i])
+    im.set_array(win_frames[i])
     return (im,)
 
-ani = animation.FuncAnimation(fig, update, frames=len(frames), interval=50, blit=True)
-# show
+ani = animation.FuncAnimation(fig, update, frames=len(win_frames), interval=60, blit=True)
 plt.show()
 
-# optionally save mp4 (requires ffmpeg)
-save_path = os.path.join(log_dir, "playback.mp4")
-ani.save(save_path, writer="ffmpeg", fps=60)
-print("Saved playback to", save_path)
+save_path = os.path.join(log_dir, "winning_playback.mp4")
+ani.save(save_path, writer="ffmpeg", fps=30)
+print("Saved winning playback to", save_path)

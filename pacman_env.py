@@ -97,6 +97,8 @@ class PacmanEnv(gym.Env):
         ghost_catch_reward = -200      # keep ghost penalty
         all_pellets_eaten_reward = 500 # keep win reward
         step_limit_reward = -0.1       # much smaller truncation penalty
+        # punish if visiting already visited cell
+        repeat_cell_reward = -1
 
 
         terminated = False
@@ -112,6 +114,8 @@ class PacmanEnv(gym.Env):
         if self.pellets[self.pacman[0], self.pacman[1]] == 1:
             reward += eat_pellet_reward
             self.pellets[self.pacman[0], self.pacman[1]] = 0
+        else:
+            reward += repeat_cell_reward
 
         # ghosts move randomly (simple baseline), blocked by walls
         for g in range(len(self.ghosts)):
